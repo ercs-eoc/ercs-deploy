@@ -1,0 +1,63 @@
+{
+    email {$CADDY_EMAIL}
+}
+
+(file_server_config) {
+    encode gzip
+    file_server
+}
+
+
+{$CADDY_HOST_BACKEND} {
+    encode gzip zstd
+    root * /assets/backend/
+
+    request_body {
+        max_size 100MB
+    }
+
+    @download {
+        path /media/*
+        query treat_as_download=true
+    }
+
+    @isStatic {
+        path /static/* /media/*
+    }
+    @notStatic {
+        not path /static/* /media/*
+    }
+    reverse_proxy @notStatic web:80 {
+        header_up X-Forwarded-Proto https
+    }
+    file_server
+
+    header @isStatic {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Request-Methods "GET"
+        Access-Control-Allow-Headers Content-Type
+    }
+
+    # Allow website to have download feature for files which browser can open (eg: json)
+    header @download {
+        Content-Disposition "attachment; filename={http.request.uri.path.file}"
+    }
+}
+
+
+{$CADDY_HOST_FRONTEND} {
+    handle {
+        try_files {path} /index.html
+        root * /assets/frontend
+        import file_server_config
+    }
+}
+
+
+{$CADDY_HOST_CMS} {
+    handle {
+        try_files {path} /index.html
+        root * /assets/cms
+        import file_server_config
+    }
+}
