@@ -1,0 +1,159 @@
+name: ${COMPOSE_PROJECT_NAME?error}
+
+x-server: &base_server_setup
+  build:
+    context: ./backend/
+  # Used for python debugging.
+  stdin_open: true
+  tty: true
+  restart: unless-stopped
+  # NOTE: values here OVERRIDE ./env/backend.env. Keep this block to infra
+  # wiring only; app config (domains, secrets, LLM, Sentry) lives in the env file.
+  environment: &base_server_environments
+    APP_ENVIRONMENT: ${APP_ENVIRONMENT:-PROD}
+    APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    TIME_ZONE: ${BACKEND_TIME_ZONE:-UTC}
+    # Postgres
+    POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+    POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    POSTGRES_DB: ${POSTGRES_DB:-ercs}
+    POSTGRES_USER: ${POSTGRES_USER?error}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?error}
+    # Redis / Celery
+    CELERY_REDIS_URL: ${CELERY_REDIS_URL:-redis://redis:6379/0}
+    CACHE_REDIS_URL: ${CACHE_REDIS_URL:-redis://redis:6379/1}
+    TEST_CACHE_REDIS_URL: ${TEST_CACHE_REDIS_URL:-redis://redis:6379/11}
+    # Storage
+    MEDIA_ROOT: "/data/media"
+    STATIC_ROOT: "/data/static"
+    TEMP_DIR: "/data/temp"
+    MEDIA_URL: "media/"
+    STATIC_URL: "static/"
+  env_file:
+    - ./env/backend.env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ./data/backend/static:/data/static
+    - ./data/backend/media:/data/media
+    - ./data/backend/temp:/data/temp
+    - ./data/backend/internal:/data/internal
+    - ipython_data_local:/root/.ipython/profile_default   # persist ipython data, including ipython history
+  depends_on:
+    - postgres
+    - redis
+  profiles:
+    - core
+
+x-worker: &base_worker_setup
+  <<: *base_server_setup
+  environment:
+    <<: *base_server_environments
+    APP_TYPE: "WORKER"
+
+services:
+  # Backend
+  postgres:
+    # NOTE: ercs-backend stores report embeddings in a pgvector VectorField
+    # (apps/reports/models.py), so the plain postgres image will not do.
+    image: pgvector/pgvector:0.8.1-pg17-trixie
+    restart: unless-stopped
+    environment:
+      # NOTE: This config is only used for db first startup only
+      POSTGRES_DB: ${POSTGRES_DB:-ercs}
+      POSTGRES_USER: ${POSTGRES_USER?error}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?error}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - core
+
+  redis:
+    image: redis:8.10.1-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    profiles:
+      - core
+
+  web:
+    <<: *base_server_setup
+    environment:
+      <<: *base_server_environments
+      APP_TYPE: "WEB"
+    command: bash -c "/code/misc/prod/run_web.sh"
+
+  worker:
+    <<: *base_worker_setup
+    command: bash -c  "/code/misc/prod/run_worker.sh"
+
+  worker-beat:
+    <<: *base_worker_setup
+    command: bash -c "/code/misc/prod/run_worker_beat.sh"
+  #TODO(@sudip-khanal): update frontend and cms Docker file
+  frontend:
+    build:
+      context: frontend/
+      target: builder
+    tty: true
+    environment:
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+    command: sh -c 'pnpm generate:type && pnpm build'
+    volumes:
+      - ./data/web-builds/frontend:/code/build
+    env_file:
+      - ./env/frontend.env
+    profiles:
+      - web-builds
+
+  cms:
+    build:
+      context: cms/
+      target: builder
+    tty: true
+    environment:
+      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-production}
+    command: sh -c 'pnpm generate:type && pnpm build'
+    volumes:
+      - ./data/web-builds/cms:/code/build
+    env_file:
+      - ./env/cms.env
+    profiles:
+      - web-builds
+
+  caddy:
+    image: caddy:2.11.4
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CADDY_EMAIL: ${CADDY_EMAIL?error}
+      CADDY_HOST_BACKEND: ${CADDY_HOST_BACKEND?error}
+      CADDY_HOST_FRONTEND: ${CADDY_HOST_FRONTEND?error}
+      CADDY_HOST_CMS: ${CADDY_HOST_CMS?error}
+    volumes:
+      # Caddy config
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data/:/data
+      - ./data/caddy/config/:/config
+      # Static files
+      # -- Backend
+      - ./data/backend/static:/assets/backend/static:ro
+      - ./data/backend/media:/assets/backend/media:ro
+      # -- Web apps
+      - ./data/web-builds/frontend:/assets/frontend:ro
+      - ./data/web-builds/cms:/assets/cms:ro
+    depends_on:
+      - web
+    profiles:
+      - core
+
+volumes:
+  redis_data:
+  ipython_data_local:
