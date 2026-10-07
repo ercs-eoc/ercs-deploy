@@ -1,14 +1,14 @@
 [submodule "frontend"]
 	path = frontend
-	url = git@github.com:toggle-corp/ercs-client.git
+	url = git@github.com:ercs-eoc/ercs-client.git
 	branch = develop
 
 [submodule "cms"]
 	path = cms
-	url = git@github.com:toggle-corp/ercs-cms.git
+	url = git@github.com:ercs-eoc/ercs-cms.git
 	branch = develop
 
 [submodule "backend"]
 	path = backend
-	url = git@github.com:toggle-corp/ercs-backend.git
+	url = git@github.com:ercs-eoc/ercs-backend.git
 	branch = develop
