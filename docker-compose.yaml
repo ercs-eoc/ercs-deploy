@@ -7,8 +7,6 @@ x-server: &base_server_setup
   stdin_open: true
   tty: true
   restart: unless-stopped
-  # NOTE: values here OVERRIDE ./env/backend.env. Keep this block to infra
-  # wiring only; app config (domains, secrets, LLM, Sentry) lives in the env file.
   environment: &base_server_environments
     APP_ENVIRONMENT: ${APP_ENVIRONMENT:-PROD}
     APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
@@ -22,7 +20,10 @@ x-server: &base_server_setup
     # Redis / Celery
     CELERY_REDIS_URL: ${CELERY_REDIS_URL:-redis://redis:6379/0}
     CACHE_REDIS_URL: ${CACHE_REDIS_URL:-redis://redis:6379/1}
-    TEST_CACHE_REDIS_URL: ${TEST_CACHE_REDIS_URL:-redis://redis:6379/11}
+    LLM_OLLAMA_BASE_URL: ${LLM_OLLAMA_BASE_URL?error}
+    LLM_MODEL_NAME: ${LLM_MODEL_NAME?error}
+    LLM_DOC_SUMMARY_MODEL_NAME: ${LLM_DOC_SUMMARY_MODEL_NAME:-}
+    LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL?error}
     # Storage
     MEDIA_ROOT: "/data/media"
     STATIC_ROOT: "/data/static"
@@ -42,6 +43,7 @@ x-server: &base_server_setup
   depends_on:
     - postgres
     - redis
+    - ollama
   profiles:
     - core
 
@@ -55,7 +57,6 @@ services:
   # Backend
   postgres:
     # NOTE: ercs-backend stores report embeddings in a pgvector VectorField
-    # (apps/reports/models.py), so the plain postgres image will not do.
     image: pgvector/pgvector:0.8.1-pg17-trixie
     restart: unless-stopped
     environment:
@@ -81,12 +82,61 @@ services:
     profiles:
       - core
 
+  ollama:
+    image: ollama/ollama:0.35.1
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME?error}
+      LLM_DOC_SUMMARY_MODEL_NAME: ${LLM_DOC_SUMMARY_MODEL_NAME:-}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL?error}
+
+    entrypoint:
+      - /bin/bash
+      - /scripts/run_ollama.sh
+
+    volumes:
+      - ollama_models:/root/.ollama
+      - ./scripts/run_ollama.sh:/scripts/run_ollama.sh:ro
+
+    healthcheck:
+      # Healthy only once the startup pulls are done.
+      test: ["CMD-SHELL", "ollama show $$LLM_MODEL_NAME >/dev/null && ollama show $$LLM_EMBEDDING_MODEL >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30m
+
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+    profiles:
+      - core
+
+
   web:
     <<: *base_server_setup
     environment:
       <<: *base_server_environments
       APP_TYPE: "WEB"
-    command: bash -c "/code/misc/prod/run_web.sh"
+    command: bash -c "/code/deploy/run_prod.sh"
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK?error}
+      - traefik.http.routers.ercs-backend-api.rule=Host(`${BACKEND_HOST?error}`)
+      - traefik.http.routers.ercs-backend-api.entrypoints=websecure
+      - traefik.http.routers.ercs-backend-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-backend-api.service=ercs-backend-api
+      - traefik.http.routers.ercs-backend-api.middlewares=ercs-backend-body-limit,ercs-backend-compress
+      - traefik.http.services.ercs-backend-api.loadbalancer.server.port=80
+      - traefik.http.middlewares.ercs-backend-body-limit.buffering.maxRequestBodyBytes=104857600 # 100MB upload limit
+      - traefik.http.middlewares.ercs-backend-compress.compress=true
 
   worker:
     <<: *base_worker_setup
@@ -95,14 +145,16 @@ services:
   worker-beat:
     <<: *base_worker_setup
     command: bash -c "/code/misc/prod/run_worker_beat.sh"
-  #TODO(@sudip-khanal): update frontend and cms Docker file
+
   frontend:
     build:
       context: frontend/
-      target: builder
+      target: dev
     tty: true
     environment:
-      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-prod}
+      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
+      APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
     command: sh -c 'pnpm generate:type && pnpm build'
     volumes:
       - ./data/web-builds/frontend:/code/build
@@ -114,10 +166,12 @@ services:
   cms:
     build:
       context: cms/
-      target: builder
+      target: dev
     tty: true
     environment:
-      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-production}
+      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-prod}
+      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
+      APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
     command: sh -c 'pnpm generate:type && pnpm build'
     volumes:
       - ./data/web-builds/cms:/code/build
@@ -126,34 +180,49 @@ services:
     profiles:
       - web-builds
 
-  caddy:
-    image: caddy:2.11.4
+  nginx:
+    image: nginx:1.30.5-alpine
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      CADDY_EMAIL: ${CADDY_EMAIL?error}
-      CADDY_HOST_BACKEND: ${CADDY_HOST_BACKEND?error}
-      CADDY_HOST_FRONTEND: ${CADDY_HOST_FRONTEND?error}
-      CADDY_HOST_CMS: ${CADDY_HOST_CMS?error}
     volumes:
-      # Caddy config
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./data/caddy/data/:/data
-      - ./data/caddy/config/:/config
-      # Static files
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # -- Backend
       - ./data/backend/static:/assets/backend/static:ro
       - ./data/backend/media:/assets/backend/media:ro
       # -- Web apps
       - ./data/web-builds/frontend:/assets/frontend:ro
       - ./data/web-builds/cms:/assets/cms:ro
-    depends_on:
-      - web
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK?error}
+      # Backend
+      - traefik.http.routers.ercs-backend-static.rule=Host(`${BACKEND_HOST?error}`) && (PathPrefix(`/static/`) || PathPrefix(`/media/`))
+      - traefik.http.routers.ercs-backend-static.entrypoints=websecure
+      - traefik.http.routers.ercs-backend-static.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-backend-static.service=ercs-backend-static
+      - traefik.http.services.ercs-backend-static.loadbalancer.server.port=8001
+      # Frontend
+      - traefik.http.routers.ercs-frontend.rule=Host(`${FRONTEND_HOST?error}`)
+      - traefik.http.routers.ercs-frontend.entrypoints=websecure
+      - traefik.http.routers.ercs-frontend.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-frontend.service=ercs-frontend
+      - traefik.http.services.ercs-frontend.loadbalancer.server.port=8002
+      # CMS
+      - traefik.http.routers.ercs-cms.rule=Host(`${CMS_HOST?error}`)
+      - traefik.http.routers.ercs-cms.entrypoints=websecure
+      - traefik.http.routers.ercs-cms.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-cms.service=ercs-cms
+      - traefik.http.services.ercs-cms.loadbalancer.server.port=8003
     profiles:
       - core
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK?error}
 
 volumes:
   redis_data:
   ipython_data_local:
+  ollama_models:
