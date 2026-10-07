@@ -1,4 +1,4 @@
-name: ${COMPOSE_PROJECT_NAME?error}
+name: ercs-${PROJECT_ENVIRONMENT?error}
 
 x-logging: &default_logging
   driver: journald
@@ -18,14 +18,16 @@ x-server: &base_server_setup
     APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
     TIME_ZONE: ${BACKEND_TIME_ZONE:-UTC}
     # Postgres
-    POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+    POSTGRES_HOST: ercs-${PROJECT_ENVIRONMENT}-postgres
     POSTGRES_PORT: ${POSTGRES_PORT:-5432}
     POSTGRES_DB: ${POSTGRES_DB:-ercs}
     POSTGRES_USER: ${POSTGRES_USER?error}
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?error}
     # Redis / Celery
-    CELERY_REDIS_URL: ${CELERY_REDIS_URL:-redis://redis:6379/0}
-    CACHE_REDIS_URL: ${CACHE_REDIS_URL:-redis://redis:6379/1}
+    CELERY_REDIS_URL: redis://ercs-${PROJECT_ENVIRONMENT}-redis:6379/0
+    CACHE_REDIS_URL: redis://ercs-${PROJECT_ENVIRONMENT}-redis:6379/1
+    # Ollama
+    LLM_OLLAMA_BASE_URL: http://ercs-${PROJECT_ENVIRONMENT}-ollama:11434
     # Storage
     MEDIA_ROOT: "/data/media"
     STATIC_ROOT: "/data/static"
@@ -69,6 +71,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?error}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      default:
+        aliases:
+          - ercs-${PROJECT_ENVIRONMENT}-postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
       interval: 10s
@@ -83,6 +89,10 @@ services:
     logging: *default_logging
     volumes:
       - redis_data:/data
+    networks:
+      default:
+        aliases:
+          - ercs-${PROJECT_ENVIRONMENT}-redis
     profiles:
       - core
 
@@ -100,6 +110,10 @@ services:
     volumes:
       - ollama_models:/root/.ollama
       - ./scripts/run_ollama.sh:/scripts/run_ollama.sh:ro
+    networks:
+      default:
+        aliases:
+          - ercs-${PROJECT_ENVIRONMENT}-ollama
 
     healthcheck:
       # Healthy only once the startup pulls are done.
@@ -129,14 +143,14 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK?error}
-      - traefik.http.routers.ercs-backend-api.rule=Host(`${BACKEND_HOST?error}`)
-      - traefik.http.routers.ercs-backend-api.entrypoints=websecure
-      - traefik.http.routers.ercs-backend-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
-      - traefik.http.routers.ercs-backend-api.service=ercs-backend-api
-      - traefik.http.routers.ercs-backend-api.middlewares=ercs-backend-body-limit,ercs-backend-compress
-      - traefik.http.services.ercs-backend-api.loadbalancer.server.port=80
-      - traefik.http.middlewares.ercs-backend-body-limit.buffering.maxRequestBodyBytes=104857600 # 100MB upload limit
-      - traefik.http.middlewares.ercs-backend-compress.compress=true
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-api.rule=Host(`${BACKEND_HOST?error}`)
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-api.entrypoints=websecure
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-api.service=ercs-${PROJECT_ENVIRONMENT}-backend-api
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-api.middlewares=ercs-${PROJECT_ENVIRONMENT}-backend-body-limit,ercs-${PROJECT_ENVIRONMENT}-backend-compress
+      - traefik.http.services.ercs-${PROJECT_ENVIRONMENT}-backend-api.loadbalancer.server.port=80
+      - traefik.http.middlewares.ercs-${PROJECT_ENVIRONMENT}-backend-body-limit.buffering.maxRequestBodyBytes=104857600 # 100MB upload limit
+      - traefik.http.middlewares.ercs-${PROJECT_ENVIRONMENT}-backend-compress.compress=true
 
   worker:
     <<: *base_worker_setup
@@ -198,23 +212,23 @@ services:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK?error}
       # Backend
-      - traefik.http.routers.ercs-backend-static.rule=Host(`${BACKEND_HOST?error}`) && (PathPrefix(`/static/`) || PathPrefix(`/media/`))
-      - traefik.http.routers.ercs-backend-static.entrypoints=websecure
-      - traefik.http.routers.ercs-backend-static.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
-      - traefik.http.routers.ercs-backend-static.service=ercs-backend-static
-      - traefik.http.services.ercs-backend-static.loadbalancer.server.port=8001
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-static.rule=Host(`${BACKEND_HOST?error}`) && (PathPrefix(`/static/`) || PathPrefix(`/media/`))
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-static.entrypoints=websecure
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-static.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-backend-static.service=ercs-${PROJECT_ENVIRONMENT}-backend-static
+      - traefik.http.services.ercs-${PROJECT_ENVIRONMENT}-backend-static.loadbalancer.server.port=8001
       # Frontend
-      - traefik.http.routers.ercs-frontend.rule=Host(`${FRONTEND_HOST?error}`)
-      - traefik.http.routers.ercs-frontend.entrypoints=websecure
-      - traefik.http.routers.ercs-frontend.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
-      - traefik.http.routers.ercs-frontend.service=ercs-frontend
-      - traefik.http.services.ercs-frontend.loadbalancer.server.port=8002
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-frontend.rule=Host(`${FRONTEND_HOST?error}`)
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-frontend.entrypoints=websecure
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-frontend.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-frontend.service=ercs-${PROJECT_ENVIRONMENT}-frontend
+      - traefik.http.services.ercs-${PROJECT_ENVIRONMENT}-frontend.loadbalancer.server.port=8002
       # CMS
-      - traefik.http.routers.ercs-cms.rule=Host(`${CMS_HOST?error}`)
-      - traefik.http.routers.ercs-cms.entrypoints=websecure
-      - traefik.http.routers.ercs-cms.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
-      - traefik.http.routers.ercs-cms.service=ercs-cms
-      - traefik.http.services.ercs-cms.loadbalancer.server.port=8003
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-cms.rule=Host(`${CMS_HOST?error}`)
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-cms.entrypoints=websecure
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-cms.tls.certresolver=${TRAEFIK_CERT_RESOLVER?error}
+      - traefik.http.routers.ercs-${PROJECT_ENVIRONMENT}-cms.service=ercs-${PROJECT_ENVIRONMENT}-cms
+      - traefik.http.services.ercs-${PROJECT_ENVIRONMENT}-cms.loadbalancer.server.port=8003
     profiles:
       - core
 
