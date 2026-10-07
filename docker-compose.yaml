@@ -1,5 +1,10 @@
 name: ${COMPOSE_PROJECT_NAME?error}
 
+x-logging: &default_logging
+  driver: journald
+  options:
+    tag: "{{.Name}}"
+
 x-server: &base_server_setup
   build:
     context: ./backend/
@@ -7,6 +12,7 @@ x-server: &base_server_setup
   stdin_open: true
   tty: true
   restart: unless-stopped
+  logging: *default_logging
   environment: &base_server_environments
     APP_ENVIRONMENT: ${APP_ENVIRONMENT:-PROD}
     APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
@@ -20,10 +26,6 @@ x-server: &base_server_setup
     # Redis / Celery
     CELERY_REDIS_URL: ${CELERY_REDIS_URL:-redis://redis:6379/0}
     CACHE_REDIS_URL: ${CACHE_REDIS_URL:-redis://redis:6379/1}
-    LLM_OLLAMA_BASE_URL: ${LLM_OLLAMA_BASE_URL?error}
-    LLM_MODEL_NAME: ${LLM_MODEL_NAME?error}
-    LLM_DOC_SUMMARY_MODEL_NAME: ${LLM_DOC_SUMMARY_MODEL_NAME:-}
-    LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL?error}
     # Storage
     MEDIA_ROOT: "/data/media"
     STATIC_ROOT: "/data/static"
@@ -59,6 +61,7 @@ services:
     # NOTE: ercs-backend stores report embeddings in a pgvector VectorField
     image: pgvector/pgvector:0.8.1-pg17-trixie
     restart: unless-stopped
+    logging: *default_logging
     environment:
       # NOTE: This config is only used for db first startup only
       POSTGRES_DB: ${POSTGRES_DB:-ercs}
@@ -77,6 +80,7 @@ services:
   redis:
     image: redis:8.10.1-alpine
     restart: unless-stopped
+    logging: *default_logging
     volumes:
       - redis_data:/data
     profiles:
@@ -85,13 +89,9 @@ services:
   ollama:
     image: ollama/ollama:0.35.1
     restart: unless-stopped
-    environment:
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
-      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
-      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2}
-      LLM_MODEL_NAME: ${LLM_MODEL_NAME?error}
-      LLM_DOC_SUMMARY_MODEL_NAME: ${LLM_DOC_SUMMARY_MODEL_NAME:-}
-      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL?error}
+    logging: *default_logging
+    env_file:
+      - ./env/backend.env
 
     entrypoint:
       - /bin/bash
@@ -183,6 +183,7 @@ services:
   nginx:
     image: nginx:1.30.5-alpine
     restart: unless-stopped
+    logging: *default_logging
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # -- Backend
