@@ -1,20 +1,18 @@
 # ERCS Deploy
 
-Docker Compose setup for deploying ERCS, including the `backend`, `frontend`, and `cms` applications. The web applications are served through nginx, with Traefik handling the external routing.
+Docker Compose setup for deploying ERCS, including the `backend`, `frontend`, and `cms` applications. The web applications are served by nginx, with Traefik handling external routing.
 
 ## Setup
 
 Before starting the services, initialize the Git submodules and create the required environment files:
 
 ```bash
-git submodule update --init --recursive
+./scripts/sub-module-sync
 
 cp .env.sample .env
 
 cp env/backend.env.sample env/backend.env
-
 cp env/frontend.env.sample env/frontend.env
-
 cp env/cms.env.sample env/cms.env
 ```
 
@@ -24,29 +22,26 @@ Fill in the required values in the environment files before starting the deploym
 
 ## Profiles
 
-The Compose setup is divided into profiles:
+The Compose setup is divided into two independent profiles:
 
-| Profile      | Services                                                            |
-| ------------ | ------------------------------------------------------------------- |
-| `core`       | postgres, redis, ollama, web, worker, worker-beat, nginx            |
-| `web-builds` | frontend, cms (one-shot builds that output to `./data/web-builds/`) |
+| Profile      | Services                                                                  |
+| ------------ | ------------------------------------------------------------------------- |
+| `core`       | postgres, redis, ollama, web, worker, worker-beat, nginx                  |
+| `web-builds` | frontend, cms (one-shot builds that output files to `./data/web-builds/`) |
 
+The profiles do not depend on each other and can be run independently.
 
 ## Running the Deployment
 
-The two profiles are independent and do not depend on each other.
-
 ### 1. Build the web applications
 
-Run the frontend and CMS builds:
+Build the frontend and CMS applications:
 
 ```bash
-docker compose run --rm --build frontend
-
-docker compose run --rm --build cms
+task web-builds
 ```
 
-These commands build the applications and place the generated files under `./data/web-builds/`.
+The generated files are placed under `./data/web-builds/` and are served by nginx.
 
 ### 2. Start the core services
 
@@ -56,7 +51,15 @@ Once the web applications have been built, start the core services:
 docker compose --profile core up -d
 ```
 
-nginx serves the contents of `./data/web-builds/` directly. Therefore, whenever the frontend or CMS needs to be redeployed, simply repeat step 1 to rebuild the relevant application.
+nginx serves the generated files from `./data/web-builds/` directly.
+
+Whenever the frontend or CMS needs to be redeployed, rebuild the relevant application by running:
+
+```bash
+task web-builds
+```
+
+There is no need to restart nginx unless its configuration has changed.
 
 ## Running Migrations
 
@@ -68,13 +71,13 @@ docker compose exec web ./manage.py migrate
 
 ## Creating a Superuser
 
-To create a new superuser:
+Create a new Django superuser with:
 
 ```bash
 docker compose exec web ./manage.py createsuperuser
 ```
 
-## Loading Seed Data
+## Loading Seed Data (Optional)
 
 The `seed_data/db.json` fixture contains initial data for ERCS, including:
 
@@ -89,13 +92,13 @@ docker compose exec web ./manage.py loaddata seed_data/db.json
 
 > **Note:** The fixture includes a pre-created admin account: `admin@togglecorp.com`.
 >
-> If a superuser with the same email already exists in the database, loading the fixture will fail with a conflict. In that case, either delete the existing user first or skip the user fixture when loading the seed data.
+> If a superuser with the same email already exists in the database, loading the fixture may fail due to a conflict. In that case, either delete the existing user first or skip the user fixture when loading the seed data.
 
 ## Syncing Geographic Data
 
 Administrative areas such as countries, regions, and zones are sourced from the IFRC GO API.
 
-To synchronize the geographic data with the database, run:
+To synchronize geographic data with the database, run:
 
 ```bash
 docker compose exec web ./manage.py sync_geo
@@ -117,7 +120,7 @@ To synchronize all forms:
 docker compose exec web ./manage.py sync_kobo
 ```
 
-To synchronize only a specific form, for example the Emergency Alert form:
+To synchronize a specific form, for example, the Emergency Alert form:
 
 ```bash
 docker compose exec web ./manage.py sync_kobo --form alert
