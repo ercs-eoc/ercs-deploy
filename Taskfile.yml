@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+env:
+  FRONTEND_COMMIT_HASH:
+    sh: ./scripts/get-commit-hash.sh .git/modules/frontend
+  CMS_COMMIT_HASH:
+    sh: ./scripts/get-commit-hash.sh .git/modules/cms
+
+
+tasks:
+  web-build-frontend:
+    cmds:
+      - docker compose --profile web-builds up --build
+  web-build-cms:
+    cmds:
+      - docker compose --profile web-builds up --build
+  web-builds:
+    cmds:
+      - task: web-build-frontend
+      - task: web-build-cms
+      - echo "Success"
