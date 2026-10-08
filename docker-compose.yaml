@@ -163,10 +163,10 @@ services:
   frontend:
     build:
       context: frontend/
-      target: dev
+      target: builder
     tty: true
     environment:
-      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-prod}
+      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT?error}
       APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
       APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
     command: sh -c 'pnpm generate:type && pnpm build'
@@ -180,10 +180,10 @@ services:
   cms:
     build:
       context: cms/
-      target: dev
+      target: builder
     tty: true
     environment:
-      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT:-prod}
+      APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT?error}
       APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
       APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
     command: sh -c 'pnpm generate:type && pnpm build'
