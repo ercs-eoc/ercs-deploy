@@ -136,7 +136,7 @@ services:
     environment:
       <<: *base_server_environments
       APP_TYPE: "WEB"
-    command: bash -c "/code/deploy/run_prod.sh"
+    command: bash -c "/code/misc/prod/run_web.sh"
     networks:
       - default
       - traefik
