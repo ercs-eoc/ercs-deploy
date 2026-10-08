@@ -167,7 +167,7 @@ services:
     tty: true
     environment:
       APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT?error}
-      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
+      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}
       APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
       APP_COMMIT_HASH: ${FRONTEND_COMMIT_HASH}
     command: sh -c 'pnpm generate:type && pnpm build'
@@ -185,7 +185,7 @@ services:
     tty: true
     environment:
       APP_ENVIRONMENT: ${WEB_APP_ENVIRONMENT?error}
-      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}/graphql/
+      APP_GRAPHQL_ENDPOINT: https://${BACKEND_HOST?error}
       APP_GRAPHQL_CODEGEN_ENDPOINT: ./backend/schema.graphql
       APP_COMMIT_HASH: ${CMS_COMMIT_HASH}
     command: sh -c 'pnpm generate:type && pnpm build'

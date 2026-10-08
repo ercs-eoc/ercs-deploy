@@ -11,10 +11,10 @@ env:
 tasks:
   web-build-frontend:
     cmds:
-      - docker compose --profile web-builds up --build
+      - docker compose --profile web-builds up --build --abort-on-container-exit frontend
   web-build-cms:
     cmds:
-      - docker compose --profile web-builds up --build
+      - docker compose --profile web-builds up --build --abort-on-container-exit cms
   web-builds:
     cmds:
       - task: web-build-frontend
