@@ -154,7 +154,17 @@ services:
 
   worker:
     <<: *base_worker_setup
-    command: bash -c  "/code/misc/prod/run_worker.sh"
+    environment:
+      <<: *base_server_environments
+      CELERY_QUEUES: "default"
+    command: bash -c "/code/misc/prod/run_worker.sh"
+
+  worker-report-llm:
+    <<: *base_worker_setup
+    environment:
+      <<: *base_server_environments
+      CELERY_QUEUES: "report-llm"
+    command: bash -c "/code/misc/prod/run_worker.sh"
 
   worker-beat:
     <<: *base_worker_setup
