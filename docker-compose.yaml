@@ -157,6 +157,7 @@ services:
     environment:
       <<: *base_server_environments
       CELERY_QUEUES: "default"
+      APP_TYPE: "WORKER"
     command: bash -c "/code/misc/prod/run_worker.sh"
 
   worker-report-llm:
@@ -164,6 +165,7 @@ services:
     environment:
       <<: *base_server_environments
       CELERY_QUEUES: "report-llm"
+      APP_TYPE: "WORKER"
     command: bash -c "/code/misc/prod/run_worker.sh"
 
   worker-beat:
